@@ -18,6 +18,25 @@ func (r readFunc) Read(p []byte) (int, error) {
 	return r(p)
 }
 
+type watchReader func(desc int) (unix.InotifyEvent, error)
+
+// Reads an event from the watch file
+// Returns either a valid inotify event or the raw read error
+func defaultWatchReader(fd int) (unix.InotifyEvent, error) {
+	data := make([]byte, unix.SizeofInotifyEvent)
+	f := func(data []byte) (int, error) {
+		return unix.Read(fd, data)
+	}
+
+	_, readError := io.ReadFull(readFunc(f), data)
+	if readError != nil {
+		return unix.InotifyEvent{}, readError
+	} else {
+		inEvent := (*(*unix.InotifyEvent)(unsafe.Pointer(&data[0])))
+		return inEvent, nil
+	}
+}
+
 // FileWriteWatcher watches a file for write events
 // The Events channel receives a message for each write event encountered
 // If FileWriteWatcher closes the events channel encounters an IN_WRITE_CLOSE
@@ -29,6 +48,7 @@ type FileWriteWatcher struct {
 	events    chan struct{}
 	err       error
 	closeOnce *sync.Once
+	readEvent watchReader
 }
 
 // Close/Stop the FileWriteWatcher
@@ -60,6 +80,12 @@ func (w *FileWriteWatcher) Events() chan struct{} {
 // FileWriteWatcher will watch the file until it receives a close event from a writer
 // or the caller invokes the watcher's 'Close' method.
 func NewWatcher(path string) (*FileWriteWatcher, error) {
+	return newWatcher(path, defaultWatchReader)
+}
+
+// internally create new watcher with our own event reader function
+// mainly implemented this way for testability
+func newWatcher(path string, wr watchReader) (*FileWriteWatcher, error) {
 	fd, err := unix.InotifyInit()
 	if err != nil {
 		return nil, err
@@ -75,38 +101,32 @@ func NewWatcher(path string) (*FileWriteWatcher, error) {
 		return nil, err
 	}
 
-	// Close over the watch file descriptor
-	// with a function that we can use as an io.Reader
-	f := func(data []byte) (int, error) {
-		return unix.Read(fd, data)
-	}
-
 	newWatcher := &FileWriteWatcher{
 		watchfd:   fd,
 		watchDesc: wd,
 		events:    make(chan struct{}),
 		closeOnce: &sync.Once{},
+		readEvent: wr,
 	}
 
 	// Read from the watch until we encounter an error, or observe a "IN_CLOSE_WRITE" event
 	go func() {
 		defer close(newWatcher.events)
-		data := make([]byte, unix.SizeofInotifyEvent)
 		var readError error
 		for {
+			var inEvent unix.InotifyEvent
+			inEvent, readError = newWatcher.readEvent(fd)
 			// When the watch is closed, we will break out of this read call
 			// with an EBADF
-			_, readError = io.ReadFull(readFunc(f), data)
 			if readError != nil {
 				if errors.Is(readError, syscall.EBADF) {
 					// Intentional/graceful close
 					readError = nil
 				} else {
-					readError = fmt.Errorf("error reading from watch: %w", readError)
+					readError = fmt.Errorf("error reading from watch on file %s': %w", path, readError)
 				}
 				break
 			} else {
-				inEvent := (*(*unix.InotifyEvent)(unsafe.Pointer(&data[0])))
 				if inEvent.Mask&unix.IN_MODIFY > 0 {
 					// Happy path. We got a write event on the file!
 					newWatcher.events <- struct{}{}
@@ -114,6 +134,8 @@ func NewWatcher(path string) (*FileWriteWatcher, error) {
 					// Exit on IN_CLOSE_WRITe
 					// log an error if we encountered any other event type
 					if inEvent.Mask&unix.IN_CLOSE_WRITE == 0 {
+						// Invariant violation - We *shouldn't* get here, but
+						// let's handle it just in case
 						readError = fmt.Errorf("unexpected event returned from watch '%d'", inEvent.Mask)
 					}
 					break
