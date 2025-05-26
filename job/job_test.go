@@ -1,6 +1,7 @@
 package job_test
 
 import (
+	"bytes"
 	"io"
 	"path/filepath"
 	"strconv"
@@ -69,6 +70,19 @@ func TestJob(t *testing.T) {
 	assert.Equal(t, expectEchoOutput(false, 5), string(stderrData))
 }
 
+func TestJobBadOutputPaths(t *testing.T) {
+	// path does not exist
+	j, err := job.NewJob(job.JobArgs{
+		Command: echoPathRelative,
+		// should take >=2.5 seconds to complete
+		Args:       []string{"echo", "5"},
+		StdoutPath: "/var/a",
+		StderrPath: "/bar/a",
+	})
+	assert.Error(t, err)
+	assert.Nil(t, j)
+}
+
 func TestJobStop(t *testing.T) {
 	dir := t.TempDir()
 	j, err := job.NewJob(job.JobArgs{
@@ -95,4 +109,44 @@ loop:
 		}
 	}
 	assert.Equal(t, job.JobStatusStopped, j.Status().CurrentState)
+}
+
+func TestDetachAndReattach(t *testing.T) {
+	// Attach to stdout, but then detach (close the reader)
+	// shortly after
+	dir := t.TempDir()
+	j, err := job.NewJob(job.JobArgs{
+		Command:    echoPathRelative,
+		Args:       []string{"echo", "15"},
+		StdoutPath: filepath.Join(dir, "file.stdout"),
+		StderrPath: filepath.Join(dir, "file.sterr"),
+	})
+	require.NoError(t, err)
+	sout, err := j.Stdout()
+	require.NoError(t, err)
+
+	// read a bit of output
+	stdoutData := make([]byte, 8)
+	_, err = io.ReadFull(sout, stdoutData)
+	assert.NoError(t, err)
+	assert.NoError(t, sout.Close())
+
+	// Now do it again. We should get the same data
+	sout2, err := j.Stdout()
+	assert.NoError(t, err)
+
+	secondStdoutdata := make([]byte, 8)
+	_, err = io.ReadFull(sout2, secondStdoutdata)
+	assert.NoError(t, err)
+
+	// Subsequent attach and read should restart at beginning of stdout
+	// meaning we shoud ahave the same data read into each buffer
+	assert.True(t, bytes.Equal(stdoutData, secondStdoutdata))
+
+	// Stop the job and wait for it to complete (by reading the rest of stdout)
+	assert.NoError(t, j.Stop())
+	_, err = io.ReadAll(sout2)
+	assert.NoError(t, err)
+	assert.Equal(t, job.JobStatusStopped, j.Status().CurrentState)
+	require.NoError(t, sout2.Close())
 }

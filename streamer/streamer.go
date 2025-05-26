@@ -39,13 +39,14 @@ type LiveFileStreamer struct {
 	// short circuits all subsequent calls to 'Read'
 	done error
 	// manage close behavior
-	closeOnce sync.Once
+	closeOnce *sync.Once
 }
 
 func NewLiveFileStreamer(file *os.File, W *FileWriteWatcher) *LiveFileStreamer {
 	return &LiveFileStreamer{
 		WriteWatcher: W,
 		File:         file,
+		closeOnce:    &sync.Once{},
 	}
 }
 
@@ -95,6 +96,8 @@ func (l *LiveFileStreamer) Read(p []byte) (int, error) {
 
 }
 
+// Safe for multiple calls, but subsequent
+// calls are ineffectual and always return nil
 func (l *LiveFileStreamer) Close() error {
 	var err error
 	l.closeOnce.Do(func() {
@@ -105,7 +108,6 @@ func (l *LiveFileStreamer) Close() error {
 		// Drain events channel as per our contract
 		// with the WriteWatcher
 		for range l.WriteWatcher.Events() {
-
 		}
 	})
 	return err

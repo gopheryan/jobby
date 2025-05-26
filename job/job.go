@@ -72,7 +72,7 @@ type Job struct {
 func logFileClose(f *os.File) {
 	if err := f.Close(); err != nil {
 		if !errors.Is(err, os.ErrInvalid) {
-			slog.Error("Failed to close file '%s': %w", f.Name(), err)
+			slog.Error(fmt.Sprintf("Failed to close file: %s", err))
 		}
 	}
 }
@@ -115,7 +115,7 @@ func NewJob(args JobArgs) (*Job, error) {
 		defer logFileClose(stdoutFile)
 		defer logFileClose(stderrFile)
 
-		err = c.Wait()
+		err := c.Wait()
 		// Lock the job while we update the exit status
 		newJob.Lock()
 		defer newJob.Unlock()
@@ -169,6 +169,7 @@ func (j *Job) Stop() error {
 	return err
 }
 
+// TODO: fix the error handling here
 func (j *Job) watchOutput(path string) (io.ReadCloser, error) {
 	readHandle, err := os.Open(path)
 	if err != nil {

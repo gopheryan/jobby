@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 	"syscall"
 	"unsafe"
 
@@ -27,15 +28,19 @@ type FileWriteWatcher struct {
 	watchDesc int
 	events    chan struct{}
 	err       error
+	closeOnce *sync.Once
 }
 
 // Close/Stop the FileWriteWatcher
 // Caller *must* drain the Events channel
 func (w *FileWriteWatcher) Close() error {
-	return errors.Join(
-		unix.Close(w.watchDesc),
-		unix.Close(w.watchfd),
-	)
+	var err error
+	w.closeOnce.Do(func() {
+		_, e1 := unix.InotifyRmWatch(w.watchfd, uint32(w.watchDesc))
+		e2 := unix.Close(w.watchfd)
+		err = errors.Join(e1, e2)
+	})
+	return err
 }
 
 // Set after Events channel is closed
@@ -80,6 +85,7 @@ func NewWatcher(path string) (*FileWriteWatcher, error) {
 		watchfd:   fd,
 		watchDesc: wd,
 		events:    make(chan struct{}),
+		closeOnce: &sync.Once{},
 	}
 
 	// Read from the watch until we encounter an error, or observe a "IN_CLOSE_WRITE" event
