@@ -118,6 +118,12 @@ func NewJob(args JobArgs) (*Job, error) {
 		err := c.Wait()
 		// Lock the job while we update the exit status
 		newJob.Lock()
+		// This will unlock *before* the output files close.
+		// We may consider holding the lock until the files are
+		// closed, but I don't believe we need that guarantee
+		// Other methods can be assure that observing
+		// 'processExited == true' means that the last write to
+		// the output files have completed
 		defer newJob.Unlock()
 
 		newJob.processExited = true
@@ -169,26 +175,46 @@ func (j *Job) Stop() error {
 	return err
 }
 
-// TODO: fix the error handling here
 func (j *Job) watchOutput(path string) (io.ReadCloser, error) {
-	readHandle, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("error opening output file '%s' for reading: %w", path, err)
-	}
-
+	// Important: Create the watcher *before* inspecting the state
+	// of the process. If the process exits *just* after we release the lock
+	// then we'll want this watcher to have observed those final write and close events
 	watcher, err := streamer.NewWatcher(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create watcher: %w", err)
 	}
 
+	closeWatcher := false
 	j.Lock()
 	if j.processExited {
-		if err = watcher.Close(); err != nil {
-			err = fmt.Errorf("error closing watcher: %w", err)
-		}
+		// Process has exited, which means the watcher *may* not see
+		// the 'close' event that it needs to clean itself up. So we'll close it ourselves.
+		// After all 'processExited == true' implies that the final 'write' to the output files
+		// have completed
+		closeWatcher = true
 	}
+	// else processExited == false
+	// we can't release the lock and *then* create the watcher - the output
+	// files may get closed *just before* we initilaize the watcher.
+	// That's why we create the watcher ahead of time above ^
 	j.Unlock()
+
+	readHandle, err := os.Open(path)
 	if err != nil {
+		// need to clean up the watcher since we've failed to initialize
+		// a LiveFileStreamer
+		closeWatcher = true
+		err = fmt.Errorf("error opening output file '%s' for reading: %w", path, err)
+	}
+
+	if closeWatcher {
+		_ = watcher.Close() // close is safe to be called multiple times
+		for range watcher.Events() {
+		} // Drain watcher events
+	}
+
+	if err != nil {
+		// err has already been wrapped with contextual message
 		return nil, err
 	}
 
