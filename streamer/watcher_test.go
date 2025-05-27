@@ -47,10 +47,10 @@ func TestWatch(t *testing.T) {
 		// of the watch descriptor
 		watcher, err := newWatcher(file.Name(), badReader)
 		assert.NoError(tt, err)
-		for range watcher.Events() {
-		}
 
 		assert.NoError(tt, watcher.Close())
+		for range watcher.Events() {
+		}
 		assert.Error(tt, watcher.Error())
 	})
 

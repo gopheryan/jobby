@@ -64,6 +64,7 @@ type Job struct {
 	jobLock       sync.Mutex
 	cmd           exec.Cmd
 	processExited bool
+	processDone   chan struct{}
 	exitErr       *exec.ExitError
 	userKilled    bool
 
@@ -104,9 +105,10 @@ func New(args JobArgs) (*Job, error) {
 	}
 
 	newJob := &Job{
-		cmd:        c,
-		stdoutPath: args.StdoutPath,
-		stderrPath: args.StderrPath,
+		cmd:         c,
+		stdoutPath:  args.StdoutPath,
+		stderrPath:  args.StderrPath,
+		processDone: make(chan struct{}),
 	}
 
 	// Now create a goroutine which will watch for the process to exit
@@ -128,6 +130,7 @@ func New(args JobArgs) (*Job, error) {
 		// the output files have completed
 		defer newJob.jobLock.Unlock()
 
+		close(newJob.processDone)
 		newJob.processExited = true
 		newJob.exitErr, _ = err.(*exec.ExitError)
 	}()
@@ -183,49 +186,11 @@ func (j *Job) Stop() error {
 }
 
 func (j *Job) watchOutput(path string) (io.ReadCloser, error) {
-	// Important: Create the watcher *before* inspecting the state
-	// of the process. If the process exits *just* after we release the lock
-	// then we'll want this watcher to have observed those final write and close events
-	watcher, err := streamer.NewWatcher(path)
+	fileStreamer, err := streamer.NewLiveFileStreamer(path, j.processDone)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create watcher: %w", err)
+		return nil, fmt.Errorf("failed to create file streamer: %w", err)
 	}
-
-	closeWatcher := false
-	j.jobLock.Lock()
-	if j.processExited {
-		// Process has exited, which means the watcher *may* not see
-		// the 'close' event that it needs to clean itself up. So we'll close it ourselves.
-		// After all 'processExited == true' implies that the final 'write' to the output files
-		// have completed
-		closeWatcher = true
-	}
-	// else processExited == false
-	// we can't release the lock and *then* create the watcher - the output
-	// files may get closed *just before* we initilaize the watcher.
-	// That's why we create the watcher ahead of time above ^
-	j.jobLock.Unlock()
-
-	readHandle, err := os.Open(path)
-	if err != nil {
-		// need to clean up the watcher since we've failed to initialize
-		// a LiveFileStreamer
-		closeWatcher = true
-		err = fmt.Errorf("error opening output file '%s' for reading: %w", path, err)
-	}
-
-	if closeWatcher {
-		_ = watcher.Close() // close is safe to be called multiple times
-		for range watcher.Events() {
-		} // Drain watcher events
-	}
-
-	if err != nil {
-		// err has already been wrapped with contextual message
-		return nil, err
-	}
-
-	return streamer.NewLiveFileStreamer(readHandle, watcher), nil
+	return fileStreamer, nil
 }
 
 func (j *Job) Stdout() (io.ReadCloser, error) {

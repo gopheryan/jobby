@@ -23,77 +23,65 @@ import (
 // Closing the provided watcher prematurely also results in graceful termination (with EOF error)
 type LiveFileStreamer struct {
 	// The file to 'LiveStream' from
-	File *os.File
+	file *os.File
 
 	// A FileWriteWatcher that is watching the associated
 	// File handle
-	WriteWatcher *FileWriteWatcher
+	writeWatcher *FileWriteWatcher
 
-	// Directs the Read method to either try reading from
-	// the file, or wait for a write event from the watcher.
-	// True when the last read to the file reached EOF
-	// False if we think there's still data in the file
-	useWatch bool
+	// Indicates that the file will receive no more writes
+	writerDone chan struct{}
 
-	// Captures any unexpected error
-	// short circuits all subsequent calls to 'Read'
-	done error
 	// manage close behavior
 	closeOnce *sync.Once
 }
 
-func NewLiveFileStreamer(file *os.File, W *FileWriteWatcher) *LiveFileStreamer {
-	return &LiveFileStreamer{
-		WriteWatcher: W,
-		File:         file,
-		closeOnce:    &sync.Once{},
-	}
-}
-
-func (l *LiveFileStreamer) fileRead(p []byte) (int, error) {
-	count, err := l.File.Read(p)
+func NewLiveFileStreamer(path string, writerDone chan struct{}) (*LiveFileStreamer, error) {
+	readHandle, err := os.Open(path)
 	if err != nil {
-		// Read returns 0, io.EOF, so we need not check count
-		// or deal with data in 'p' on EOF
-		if errors.Is(err, io.EOF) {
-			// We're caught up
-			l.useWatch = true
-		} else {
-			l.done = err
-			return count, l.done
-		}
+		return nil, fmt.Errorf("error opening output file '%s' for reading: %w", path, err)
 	}
-	return count, nil
+
+	watcher, err := NewWatcher(path)
+	if err != nil {
+		_ = readHandle.Close()
+		return nil, fmt.Errorf("failed to create watcher: %w", err)
+	}
+
+	return &LiveFileStreamer{file: readHandle, writeWatcher: watcher, writerDone: writerDone, closeOnce: &sync.Once{}}, nil
 }
 
 func (l *LiveFileStreamer) Read(p []byte) (int, error) {
-	if l.done != nil {
-		return 0, l.done
-	}
-
-	if !l.useWatch {
-		return l.fileRead(p)
-	}
-
-	_, ok := <-l.WriteWatcher.Events()
-	if !ok {
-		// Closure of the watch indicates that no more
-		// writes will occur. BUT, there may stil be data left in the file
-		count, err := l.fileRead(p)
-		if count == 0 && err == nil && l.useWatch {
-			// This is our end condition. The watcher is closed,
-			// and the file is exhausted
-			l.done = io.EOF // Short circuit next time
-			// If the watcher encountered an error, inform the reader
-			if l.WriteWatcher.Error() != nil {
-				l.done = fmt.Errorf("watcher encountered unexpected error: %w", l.WriteWatcher.Error())
-			}
-			return 0, l.done
+	// Read returns 0, io.EOF, so we need not check count
+	// or deal with data in 'p' on EOF
+	for {
+		count, err := l.file.Read(p)
+		if err == nil || !errors.Is(err, io.EOF) {
+			// return on success or file read errors
+			return count, err
 		}
-		return count, err
-	}
-	return l.fileRead(p)
 
+		select {
+		case _, ok := <-l.writeWatcher.Events():
+			if !ok {
+				if l.writeWatcher.Error() != nil {
+					return 0, fmt.Errorf("watcher encountered unexpected error: %w", l.writeWatcher.Error())
+				}
+				return l.file.Read(p)
+			}
+		case <-l.writerDone:
+			// Do not take this path again
+			l.writerDone = nil
+			// We must take care to drain the watcher channel
+			err := l.writeWatcher.Close()
+			if err != nil {
+				// That's not good
+				for range l.writeWatcher.Events() {
+				}
+				return 0, err
+			}
+		}
+	}
 }
 
 // Safe for multiple calls, but subsequent
@@ -102,12 +90,12 @@ func (l *LiveFileStreamer) Close() error {
 	var err error
 	l.closeOnce.Do(func() {
 		err = errors.Join(
-			l.WriteWatcher.Close(),
-			l.File.Close(),
+			l.writeWatcher.Close(),
+			l.file.Close(),
 		)
 		// Drain events channel as per our contract
 		// with the WriteWatcher
-		for range l.WriteWatcher.Events() {
+		for range l.writeWatcher.Events() {
 		}
 	})
 	return err

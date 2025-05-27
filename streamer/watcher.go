@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"sync"
-	"syscall"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
@@ -39,8 +38,6 @@ func defaultWatchReader(fd int) (unix.InotifyEvent, error) {
 
 // FileWriteWatcher watches a file for write events
 // The Events channel receives a message for each write event encountered
-// If FileWriteWatcher closes the events channel encounters an IN_WRITE_CLOSE
-// or if the caller closes the watch
 // Users are expected to read the Events channel until it is closed
 type FileWriteWatcher struct {
 	watchfd   int
@@ -48,6 +45,7 @@ type FileWriteWatcher struct {
 	events    chan struct{}
 	err       error
 	closeOnce *sync.Once
+	closeSync chan struct{}
 	readEvent watchReader
 }
 
@@ -56,9 +54,13 @@ type FileWriteWatcher struct {
 func (w *FileWriteWatcher) Close() error {
 	var err error
 	w.closeOnce.Do(func() {
+		// Close the watch first. Ths will force an IN_IGNORE event
+		// out of the watch which will signal shutdown of the
+		// goroutine managing reading
 		_, e1 := unix.InotifyRmWatch(w.watchfd, uint32(w.watchDesc))
-		e2 := unix.Close(w.watchfd)
-		err = errors.Join(e1, e2)
+		// Don't let the goroutine exit until we call close
+		close(w.closeSync)
+		err = e1
 	})
 	return err
 }
@@ -70,15 +72,14 @@ func (w *FileWriteWatcher) Error() error {
 }
 
 // Watcher sends empty messages through the channel whenever a write
-// event is received. Channel is closed when the file closes or watcher is closed
+// event is received. Channel is closed when the watcher is closed
 func (w *FileWriteWatcher) Events() chan struct{} {
 	return w.events
 }
 
 // Create a new FileWriteWatcher on the file
 // Path must point to an existing, regular file
-// FileWriteWatcher will watch the file until it receives a close event from a writer
-// or the caller invokes the watcher's 'Close' method.
+// FileWriteWatcher will watch the file until the caller invokes the watcher's 'Close' method.
 func NewWatcher(path string) (*FileWriteWatcher, error) {
 	return newWatcher(path, defaultWatchReader)
 }
@@ -91,8 +92,8 @@ func newWatcher(path string, wr watchReader) (*FileWriteWatcher, error) {
 		return nil, err
 	}
 
-	// Watch for writes and close
-	wd, err := unix.InotifyAddWatch(fd, path, unix.IN_CLOSE_WRITE|unix.IN_MODIFY)
+	// Watch for writes
+	wd, err := unix.InotifyAddWatch(fd, path, unix.IN_MODIFY)
 	if err != nil {
 		// There isn't much we can do if this fails, and it's an internal detail
 		// that doesn't mean much to the caller
@@ -101,47 +102,41 @@ func newWatcher(path string, wr watchReader) (*FileWriteWatcher, error) {
 		return nil, err
 	}
 
+	closeSync := make(chan struct{})
+
 	newWatcher := &FileWriteWatcher{
 		watchfd:   fd,
 		watchDesc: wd,
 		events:    make(chan struct{}),
 		closeOnce: &sync.Once{},
 		readEvent: wr,
+		closeSync: closeSync,
 	}
 
-	// Read from the watch until we encounter an error, or observe a "IN_CLOSE_WRITE" event
+	// Read from the watch until we encounter an error
 	go func() {
 		defer close(newWatcher.events)
 		var readError error
-		for {
+		for readError == nil {
 			var inEvent unix.InotifyEvent
 			inEvent, readError = newWatcher.readEvent(fd)
-			// When the watch is closed, we will break out of this read call
-			// with an EBADF
-			if readError != nil {
-				if errors.Is(readError, syscall.EBADF) {
-					// Intentional/graceful close
-					readError = nil
-				} else {
-					readError = fmt.Errorf("error reading from watch on file %s': %w", path, readError)
-				}
-				break
-			} else {
+			if readError == nil {
 				if inEvent.Mask&unix.IN_MODIFY > 0 {
 					// Happy path. We got a write event on the file!
 					newWatcher.events <- struct{}{}
 				} else {
-					// Exit on IN_CLOSE_WRITe
-					// log an error if we encountered any other event type
-					if inEvent.Mask&unix.IN_CLOSE_WRITE == 0 {
-						// Invariant violation - We *shouldn't* get here, but
-						// let's handle it just in case
+					// IN_IGNORED means the watch was closed
+					// Any other event is unexpected
+					if inEvent.Mask&unix.IN_IGNORED == 0 {
 						readError = fmt.Errorf("unexpected event returned from watch '%d'", inEvent.Mask)
 					}
+					// Stop reading anyhow
 					break
 				}
 			}
 		}
+		<-closeSync
+		readError = errors.Join(readError, unix.Close(fd))
 		// Communicate any errors received by the watcher
 		newWatcher.err = readError
 	}()

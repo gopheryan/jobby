@@ -29,7 +29,9 @@ func TestFileStreamer(t *testing.T) {
 	initialData := []byte("how now brown cow")
 	resources.WriteHandle.Write(initialData)
 
-	testStreamer := streamer.NewLiveFileStreamer(resources.ReadHandle, resources.Watcher)
+	done := make(chan struct{})
+	testStreamer, err := streamer.NewLiveFileStreamer(resources.WriteHandle.Name(), done)
+	require.NoError(t, err)
 
 	// Streamer should pick up initial data
 	readBuf := make([]byte, len(initialData))
@@ -76,9 +78,9 @@ func TestFileStreamer(t *testing.T) {
 	assert.Equal(t, len(readBuf), readCount)
 	assert.True(t, bytes.Equal(nextData, readBuf))
 
-	// Closing the watcher should result in the streamer
+	// Closing the done channel should result in the streamer
 	// eventually returning io.EOF
-	resources.WriteHandle.Close()
+	close(done)
 	//resources.Watcher.Close()
 	time.Sleep(10 * time.Millisecond)
 	count, err = io.ReadFull(testStreamer, readBuf)
@@ -97,7 +99,8 @@ func TestCallerClose(t *testing.T) {
 	initialData := []byte("how now brown cow")
 	resources.WriteHandle.Write(initialData)
 
-	testStreamer := streamer.NewLiveFileStreamer(resources.ReadHandle, resources.Watcher)
+	testStreamer, err := streamer.NewLiveFileStreamer(resources.WriteHandle.Name(), make(chan struct{}))
+	require.NoError(t, err)
 	// Closing should not return an error
 	assert.NoError(t, testStreamer.Close())
 
@@ -108,7 +111,7 @@ func TestCallerClose(t *testing.T) {
 }
 
 // Validate unexpected close of read handle returns an error
-func TestUnexpectedFileClose(t *testing.T) {
+func TestUnexpectedFileDelete(t *testing.T) {
 	resources, err := NewTestResources(t.TempDir())
 	require.NoError(t, err, "Failed to create test resources")
 	defer resources.Cleanup()
@@ -116,29 +119,23 @@ func TestUnexpectedFileClose(t *testing.T) {
 	initialData := []byte("how now brown cow")
 	resources.WriteHandle.Write(initialData)
 
-	testStreamer := streamer.NewLiveFileStreamer(resources.ReadHandle, resources.Watcher)
-	_ = resources.ReadHandle.Close()
+	testStreamer, err := streamer.NewLiveFileStreamer(resources.WriteHandle.Name(), make(chan struct{}))
+	require.NoError(t, err)
+	os.Remove(resources.WriteHandle.Name())
 
-	// Next read should error out
 	readBuf := make([]byte, len(initialData))
 	_, err = io.ReadFull(testStreamer, readBuf)
-	assert.Error(t, err)
+	assert.NoError(t, err)
 
-	// Should also return an error because the read handle
-	// close unexpectedly
-	assert.Error(t, testStreamer.Close())
+	assert.NoError(t, testStreamer.Close())
 }
 
 type TestResources struct {
 	WriteHandle *os.File
-	ReadHandle  *os.File
-	Watcher     *streamer.FileWriteWatcher
 }
 
 func (t *TestResources) Cleanup() {
 	_ = t.WriteHandle.Close()
-	_ = t.ReadHandle.Close()
-	_ = t.Watcher.Close()
 }
 
 func NewTestResources(dir string) (TestResources, error) {
@@ -146,18 +143,7 @@ func NewTestResources(dir string) (TestResources, error) {
 	testFile, err := os.OpenFile(filepath.Join(dir, "test"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
 	allErrs = errors.Join(allErrs, err)
 
-	watcher, err := streamer.NewWatcher(testFile.Name()) //fsnotify.NewWatcher()
-	allErrs = errors.Join(allErrs, err)
-
-	var readHandle *os.File
-	if testFile != nil {
-		readHandle, err = os.Open(testFile.Name())
-		allErrs = errors.Join(allErrs, err)
-	}
-
 	return TestResources{
 		WriteHandle: testFile,
-		ReadHandle:  readHandle,
-		Watcher:     watcher,
 	}, allErrs
 }
