@@ -35,7 +35,7 @@ func expectEchoOutput(stdout bool, count int) string {
 // First happy path test of the job!
 func TestJob(t *testing.T) {
 	dir := t.TempDir()
-	j, err := job.NewJob(job.JobArgs{
+	j, err := job.New(job.JobArgs{
 		Command: echoPathRelative,
 		// should take >=2.5 seconds to complete
 		Args:       []string{"echo", "5"},
@@ -72,7 +72,7 @@ func TestJob(t *testing.T) {
 
 func TestJobBadOutputPaths(t *testing.T) {
 	// path does not exist
-	j, err := job.NewJob(job.JobArgs{
+	j, err := job.New(job.JobArgs{
 		Command: echoPathRelative,
 		// should take >=2.5 seconds to complete
 		Args:       []string{"echo", "5"},
@@ -85,7 +85,7 @@ func TestJobBadOutputPaths(t *testing.T) {
 
 func TestJobStop(t *testing.T) {
 	dir := t.TempDir()
-	j, err := job.NewJob(job.JobArgs{
+	j, err := job.New(job.JobArgs{
 		Command: echoPathRelative,
 		// should take >=250 seconds to complete
 		Args:       []string{"echo", "500"},
@@ -115,7 +115,7 @@ func TestDetachAndReattach(t *testing.T) {
 	// Attach to stdout, but then detach (close the reader)
 	// shortly after
 	dir := t.TempDir()
-	j, err := job.NewJob(job.JobArgs{
+	j, err := job.New(job.JobArgs{
 		Command:    echoPathRelative,
 		Args:       []string{"echo", "15"},
 		StdoutPath: filepath.Join(dir, "file.stdout"),

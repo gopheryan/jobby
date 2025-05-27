@@ -27,18 +27,19 @@ const (
 	JobStatusStopped State = "STOPPED"
 )
 
-func NewState(processExited bool, e *exec.ExitError) State {
+func newState(processExited, userKilled bool, e *exec.ExitError) State {
 	if processExited {
 		// ExitCode() returns -1 if the process hasn't exited or was terminated by a signal
 		// Well we know the process exited
 		if e != nil && e.ExitCode() == -1 {
 			status, ok := e.ProcessState.Sys().(syscall.WaitStatus)
-			if ok && status.Signal() == syscall.SIGKILL {
-				// I suppose we can't know for certain that it this program who sent
-				// the SIGKILL, but it was *probably* us
-				// Maybe the documentation around the "STOPPED" state should instead be
-				// that this state means the program was forcefully terminated, rather than
-				// terminated *by a user*
+			// We know the process has exited, and the 'userKilled' flag *may*
+			// be set, but there's a chance that the process exited just as Stop()
+			// was called. Validate that this process was killed by a kill signal
+			if ok && status.Signal() == syscall.SIGKILL && userKilled {
+				// The process has exited, it was killed by a kill signal,
+				// and the job has a 'userKilled' flag indicating that the caller
+				// asked us to stop a running job.
 				return JobStatusStopped
 			}
 		}
@@ -60,10 +61,11 @@ type JobArgs struct {
 }
 
 type Job struct {
-	sync.Mutex
+	jobLock       sync.Mutex
 	cmd           exec.Cmd
 	processExited bool
 	exitErr       *exec.ExitError
+	userKilled    bool
 
 	stdoutPath string
 	stderrPath string
@@ -72,12 +74,12 @@ type Job struct {
 func logFileClose(f *os.File) {
 	if err := f.Close(); err != nil {
 		if !errors.Is(err, os.ErrInvalid) {
-			slog.Error(fmt.Sprintf("Failed to close file: %s", err))
+			slog.Error("Failed to close file", "error", err)
 		}
 	}
 }
 
-func NewJob(args JobArgs) (*Job, error) {
+func New(args JobArgs) (*Job, error) {
 	c := exec.Cmd{
 		Path: args.Command,
 		Args: args.Args,
@@ -86,7 +88,7 @@ func NewJob(args JobArgs) (*Job, error) {
 	// Create our output files!
 	stdoutFile, err := createOutputFile(args.StdoutPath)
 	stderrFile, err2 := createOutputFile(args.StderrPath)
-	if errors.Join(err, err2) != nil {
+	if err := errors.Join(err, err2); err != nil {
 		logFileClose(stdoutFile)
 		logFileClose(stderrFile)
 		return nil, fmt.Errorf("error creating output file(s): %w", err)
@@ -117,14 +119,14 @@ func NewJob(args JobArgs) (*Job, error) {
 
 		err := c.Wait()
 		// Lock the job while we update the exit status
-		newJob.Lock()
+		newJob.jobLock.Lock()
 		// This will unlock *before* the output files close.
 		// We may consider holding the lock until the files are
 		// closed, but I don't believe we need that guarantee
 		// Other methods can be assure that observing
 		// 'processExited == true' means that the last write to
 		// the output files have completed
-		defer newJob.Unlock()
+		defer newJob.jobLock.Unlock()
 
 		newJob.processExited = true
 		newJob.exitErr, _ = err.(*exec.ExitError)
@@ -143,31 +145,36 @@ func createOutputFile(path string) (*os.File, error) {
 
 func (j *Job) Status() Status {
 	var exitErr *exec.ExitError
-	var exited bool
-	j.Lock()
-	exited = j.processExited
-	exitErr = j.exitErr
-	j.Unlock()
+	j.jobLock.Lock()
 
+	exitErr = j.exitErr
+	currentState := newState(j.processExited, j.userKilled, j.exitErr)
 	var exitCode *int
 	if exitErr != nil {
 		tmp := exitErr.ExitCode()
 		exitCode = &tmp
 	}
 
+	j.jobLock.Unlock()
+
 	return Status{
-		CurrentState: NewState(exited, exitErr),
+		CurrentState: currentState,
 		ReturnCode:   exitCode,
 	}
 }
 
 func (j *Job) Stop() error {
 	var err error
-	j.Lock()
+	j.jobLock.Lock()
 	if !j.processExited {
 		err = j.cmd.Process.Kill()
+		if err == nil {
+			// Track that a successful kill signal was
+			// sent to a running process by the caller
+			j.userKilled = true
+		}
 	}
-	j.Unlock()
+	j.jobLock.Unlock()
 
 	if err != nil {
 		err = fmt.Errorf("failed to send kill signal to process: %w", err)
@@ -185,7 +192,7 @@ func (j *Job) watchOutput(path string) (io.ReadCloser, error) {
 	}
 
 	closeWatcher := false
-	j.Lock()
+	j.jobLock.Lock()
 	if j.processExited {
 		// Process has exited, which means the watcher *may* not see
 		// the 'close' event that it needs to clean itself up. So we'll close it ourselves.
@@ -197,7 +204,7 @@ func (j *Job) watchOutput(path string) (io.ReadCloser, error) {
 	// we can't release the lock and *then* create the watcher - the output
 	// files may get closed *just before* we initilaize the watcher.
 	// That's why we create the watcher ahead of time above ^
-	j.Unlock()
+	j.jobLock.Unlock()
 
 	readHandle, err := os.Open(path)
 	if err != nil {

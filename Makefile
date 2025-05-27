@@ -1,7 +1,9 @@
+.PHONY: test
 test:
 	@go test -v ./...
 
 # requires c compiler
+.PHONY: test-race
 test-race: echo
 	CGO_ENABLED=1 go test -race ./...
 
