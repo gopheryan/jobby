@@ -63,10 +63,12 @@ type Job struct {
 }
 
 func logFileClose(f *os.File) {
+	if f == nil {
+		return
+	}
+
 	if err := f.Close(); err != nil {
-		if !errors.Is(err, os.ErrInvalid) {
-			slog.Error("Failed to close file", "error", err)
-		}
+		slog.Error("Failed to close file", "error", err)
 	}
 }
 
