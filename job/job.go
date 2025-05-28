@@ -101,6 +101,7 @@ func New(args JobArgs) (*Job, error) {
 		stdoutPath:  args.StdoutPath,
 		stderrPath:  args.StderrPath,
 		processDone: make(chan struct{}),
+		exitErr:     &exec.ExitError{},
 	}
 
 	// Now create a goroutine which will watch for the process to exit
@@ -124,7 +125,7 @@ func New(args JobArgs) (*Job, error) {
 
 		close(newJob.processDone)
 		newJob.processExited = true
-		newJob.exitErr, _ = err.(*exec.ExitError)
+		_ = errors.As(err, &newJob.exitErr)
 	}()
 
 	return newJob, err
@@ -133,20 +134,20 @@ func New(args JobArgs) (*Job, error) {
 func createOutputFile(path string) (*os.File, error) {
 	// We need to open a file for writing, create if not exists,
 	// and truncate existing files
-	flags := os.O_CREATE | os.O_WRONLY | os.O_TRUNC
+	const flags = os.O_CREATE | os.O_WRONLY | os.O_TRUNC
 	// current user process can read/write, group members can read
 	return os.OpenFile(path, flags, 0640)
 }
 
 func (j *Job) Status() Status {
-	var exitErr *exec.ExitError
 	j.jobLock.Lock()
 
-	exitErr = j.exitErr
 	currentState := newState(j.processExited, j.userKilled)
 	var exitCode *int
-	if exitErr != nil {
-		tmp := exitErr.ExitCode()
+	// ExitCode returns the exit code of the exited process,
+	// or -1 if the process hasn't exited or was terminated by a signal.
+	// Safe to call on nil ExitErr
+	if tmp := j.exitErr.ExitCode(); tmp != -1 {
 		exitCode = &tmp
 	}
 
