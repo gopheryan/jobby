@@ -2,9 +2,9 @@ package job_test
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -22,9 +22,9 @@ func expectEchoOutput(stdout bool, count int) string {
 		prefix = "stderr"
 	}
 
-	bldr := strings.Builder{}
+	bldr := &strings.Builder{}
 	for idx := range count {
-		fmt.Fprintln(bldr, "%v %d", prefix, idx+1)
+		_, _ = fmt.Fprintf(bldr, "%s %d\n", prefix, idx+1)
 	}
 	return bldr.String()
 }
