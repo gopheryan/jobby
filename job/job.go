@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"sync"
-	"syscall"
 
 	"github.com/gopheryan/jobby/streamer"
 )
@@ -27,25 +26,16 @@ const (
 	JobStatusStopped State = "STOPPED"
 )
 
-func newState(processExited, userKilled bool, e *exec.ExitError) State {
-	if processExited {
-		// ExitCode() returns -1 if the process hasn't exited or was terminated by a signal
-		// Well we know the process exited
-		if e != nil && e.ExitCode() == -1 {
-			status, ok := e.ProcessState.Sys().(syscall.WaitStatus)
-			// We know the process has exited, and the 'userKilled' flag *may*
-			// be set, but there's a chance that the process exited just as Stop()
-			// was called. Validate that this process was killed by a kill signal
-			if ok && status.Signal() == syscall.SIGKILL && userKilled {
-				// The process has exited, it was killed by a kill signal,
-				// and the job has a 'userKilled' flag indicating that the caller
-				// asked us to stop a running job.
-				return JobStatusStopped
-			}
-		}
-		return JobstatusComplete
+func newState(processExited, userKilled bool) State {
+	if !processExited {
+		return JobStatusRunning
 	}
-	return JobStatusRunning
+
+	if userKilled {
+		return JobStatusStopped
+	}
+
+	return JobstatusComplete
 }
 
 type Status struct {
@@ -151,7 +141,7 @@ func (j *Job) Status() Status {
 	j.jobLock.Lock()
 
 	exitErr = j.exitErr
-	currentState := newState(j.processExited, j.userKilled, j.exitErr)
+	currentState := newState(j.processExited, j.userKilled)
 	var exitCode *int
 	if exitErr != nil {
 		tmp := exitErr.ExitCode()
