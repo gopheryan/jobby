@@ -24,10 +24,7 @@ func expectEchoOutput(stdout bool, count int) string {
 
 	bldr := strings.Builder{}
 	for idx := range count {
-		bldr.WriteString(prefix)
-		bldr.WriteString(" ")
-		bldr.WriteString(strconv.Itoa(idx + 1))
-		bldr.WriteString("\n")
+		fmt.Fprintln(bldr, "%v %d", prefix, idx+1)
 	}
 	return bldr.String()
 }
