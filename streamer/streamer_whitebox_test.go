@@ -2,6 +2,7 @@ package streamer
 
 import (
 	"bufio"
+	"errors"
 	"io"
 	"os"
 	"testing"
@@ -25,9 +26,20 @@ func TestReadError(t *testing.T) {
 	// Reading should fail with a non-EOF error
 	_, err = io.ReadAll(fs)
 	require.Error(t, err)
+	require.False(t, errors.Is(err, io.EOF))
 	// Subsequent call should return non-EOF as well
 	_, err = io.ReadAll(fs)
 	require.Error(t, err)
+	require.False(t, errors.Is(err, io.EOF))
+
+	// Calling read directly should return non-EOF error
+	// We did not happily reach end of data, we instead
+	// encountered an error
+	count, err := fs.Read(make([]byte, 1))
+	require.Error(t, err)
+	require.False(t, errors.Is(err, io.EOF))
+	require.Zero(t, count)
+
 	// Should complain also about the read handle
 	// having already been closed
 	assert.Error(t, fs.Close())
@@ -50,7 +62,7 @@ func TestHappyRead(t *testing.T) {
 	// Copy works! It knows we're done because
 	// our LiveFileStreamer returned an EOF
 	count, err := io.Copy(bufWriter, fs)
-	assert.NoError(t, err)
+	assert.NoError(t, err) // Copy receives EOF internally, but reports nil
 	assert.Equal(t, len(helloData), int(count))
 
 	// Read should return EOF
