@@ -15,7 +15,7 @@ func TestReadError(t *testing.T) {
 	writeHandle, err := os.CreateTemp(t.TempDir(), "")
 	require.NoError(t, err)
 	defer writeHandle.Close()
-	//os.OpenFile(filepath.Join(t.TempDir(),
+
 	done := make(chan struct{})
 	fs, err := NewLiveFileStreamer(writeHandle.Name(), done)
 	require.NoError(t, err)
@@ -30,14 +30,14 @@ func TestReadError(t *testing.T) {
 	// Subsequent call should return non-EOF as well
 	_, err = io.ReadAll(fs)
 	require.Error(t, err)
-	require.False(t, errors.Is(err, io.EOF))
+	require.NotErrorIs(t, err, io.EOF)
 
 	// Calling read directly should return non-EOF error
 	// We did not happily reach end of data, we instead
 	// encountered an error
 	count, err := fs.Read(make([]byte, 1))
 	require.Error(t, err)
-	require.False(t, errors.Is(err, io.EOF))
+	require.NotErrorIs(t, err, io.EOF)
 	require.Zero(t, count)
 
 	// Should complain also about the read handle
