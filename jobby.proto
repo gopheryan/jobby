@@ -1,0 +1,65 @@
+syntax = "proto3";
+
+package jobby;
+option go_package = "github.com/gopheryan/jobmanagerpb";
+
+service JobManager {
+    rpc StartJob (StartJobRequest) returns (StartJobResponse) {}
+    rpc StopJob (StopJobRequest) returns (StopJobResponse) {}
+    rpc GetStatus (GetStatusRequest) returns (GetStatusResponse) {}
+    // Server will close the send-stream once output is exhausted
+    rpc GetJobOutput (GetJobOutputRequest) returns (stream GetJobOutputResponse) {}
+}
+
+message StartJobRequest {
+    string command = 1;
+    repeated string args = 2;
+}
+
+message StartJobResponse {
+   bytes job_id = 1;
+}
+
+message StopJobRequest {
+   bytes job_id = 1;
+}
+
+message StopJobResponse {
+   // Intentionally empty
+}
+
+message GetStatusRequest {
+    bytes job_id = 1;
+}
+
+enum Status {
+    STATUS_UNSPECIFIED = 0;
+    // Currently running
+    STATUS_RUNNING = 1;
+    // Stopped prematurely (due to user action)
+    STATUS_STOPPED = 2;
+    // Completed 
+    STATUS_COMPLETE = 3;
+}
+
+message GetStatusResponse {
+   Status current_status = 1;
+   // available when status is "COMPLETE"
+   optional int32 exit_code = 2;
+}
+
+enum OutputType {
+    OUTPUT_TYPE_UNSPECIFIED = 0;
+    OUTPUT_TYPE_STDOUT = 1;
+    OUTPUT_TYPE_STDERR = 2;
+}
+
+message GetJobOutputRequest {
+   bytes job_id = 1;
+   OutputType type = 2;
+}
+
+message GetJobOutputResponse {
+    // A chunk of output data from the job
+   bytes data = 1;
+}
