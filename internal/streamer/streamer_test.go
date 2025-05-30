@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gopheryan/jobby/streamer"
+	"github.com/gopheryan/jobby/internal/streamer"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

@@ -9,7 +9,7 @@ import (
 	"os/exec"
 	"sync"
 
-	"github.com/gopheryan/jobby/streamer"
+	"github.com/gopheryan/jobby/internal/streamer"
 )
 
 // Current process state
