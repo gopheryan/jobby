@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"os"
 	"testing"
 	"time"
 
@@ -32,7 +33,7 @@ func (m *mockUserGetter) GetUserContext(_ context.Context) string {
 func TestUnaryCalls(t *testing.T) {
 	ctx := context.Background()
 	mockUserGetter := &mockUserGetter{user: "someuser"}
-	jobService := service.NewJobService(mockUserGetter, "/tmp")
+	jobService := service.NewJobService(mockUserGetter, os.TempDir())
 
 	t.Run("start-stop-status", func(tt *testing.T) {
 		resp, err := jobService.StartJob(ctx, &jobmanagerpb.StartJobRequest{
@@ -91,7 +92,7 @@ func TestUnaryCalls(t *testing.T) {
 // But for basic black box tests, a local server is easy enough to spin up
 func TestService(t *testing.T) {
 	srv := testutils.GrpcLocalServer{}
-	jobService := service.NewJobService(&mockUserGetter{user: "someuser"}, "/tmp")
+	jobService := service.NewJobService(&mockUserGetter{user: "someuser"}, os.TempDir())
 	server := grpc.NewServer()
 
 	jobService.Register(server)
@@ -122,7 +123,7 @@ func TestService(t *testing.T) {
 		})
 		require.NoError(tt, err)
 
-		fullOutput := bytes.NewBuffer(nil)
+		var fullOutput bytes.Buffer
 		// Read from output until server closes the connection
 		var msg *jobmanagerpb.GetJobOutputResponse
 		for err == nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"log"
 	"log/slog"
@@ -35,7 +36,7 @@ func slogFatal(msg string, args ...any) {
 
 func main() {
 
-	tlsConfig, err := NewTlsConfig()
+	tlsConfig, err := NewTLSConfig()
 	if err != nil {
 		slogFatal("Failed to create TLS config", "error", err)
 	}
@@ -58,7 +59,7 @@ func main() {
 		grpc.Creds(credentials.NewTLS(&tlsConfig)),
 	)
 
-	jobbyService := service.NewJobService(UserGetterFunc(authinterceptors.GetUserContext), "/tmp")
+	jobbyService := service.NewJobService(UserGetterFunc(authinterceptors.GetUserContext), os.TempDir())
 	jobbyService.Register(grpcServer)
 
 	// So I can poke at this thing with grpcurl
@@ -69,7 +70,6 @@ func main() {
 
 	// Catch sigterm and exit
 	go func() {
-		defer close(signalChan)
 		<-signalChan
 		slog.Info("Caught signal. Stopping Server")
 		grpcServer.Stop()
@@ -81,13 +81,11 @@ func main() {
 		log.Fatalf("gRPC server returned with error: %s", err)
 	}
 
-	signal.Ignore(os.Interrupt)
-	<-signalChan
 	slog.Info("nighty night!")
 }
 
 // Hardcoded!
-func NewTlsConfig() (tls.Config, error) {
+func NewTLSConfig() (tls.Config, error) {
 	localPool := x509.NewCertPool()
 
 	caCertData, err := os.ReadFile("ca/ca.crt")
@@ -97,7 +95,7 @@ func NewTlsConfig() (tls.Config, error) {
 
 	ok := localPool.AppendCertsFromPEM(caCertData)
 	if !ok {
-		return tls.Config{}, fmt.Errorf("error parsing ca crt")
+		return tls.Config{}, errors.New("error parsing ca cert")
 	}
 
 	serverCertificate, err := tls.LoadX509KeyPair("server/server.crt", "server/server.key")

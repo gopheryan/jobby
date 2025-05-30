@@ -10,15 +10,15 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-type userId string
+type userID string
 
-const userValue userId = "jobby"
+const userValue userID = "jobby"
 
 func GetUserContext(ctx context.Context) string {
 	return string(ctx.Value(userValue).(string))
 }
 
-func NewContext(ctx context.Context, user string) context.Context {
+func WithUser(ctx context.Context, user string) context.Context {
 	return context.WithValue(ctx, userValue, user)
 }
 
@@ -50,7 +50,7 @@ func AuthHandlerUnaryInterceptor(ctx context.Context, req interface{}, info *grp
 	if err != nil {
 		return nil, err
 	}
-	ctx = context.WithValue(ctx, userValue, user)
+	ctx = WithUser(ctx, user)
 	return handler(ctx, req)
 }
 
@@ -72,6 +72,6 @@ func AuthHandlerStreamInterceptor(srv interface{}, stream grpc.ServerStream, inf
 	// but we can replace the server stream entirely with our own thin wrapper
 	return handler(srv, &replacementStream{
 		ServerStream: stream,
-		ctx:          context.WithValue(stream.Context(), userValue, user),
+		ctx:          WithUser(stream.Context(), user),
 	})
 }

@@ -24,7 +24,7 @@ type UserGetter interface {
 	GetUserContext(context.Context) string
 }
 
-type JobIdGetter interface {
+type JobIDGetter interface {
 	GetJobId() []byte
 }
 
@@ -240,7 +240,7 @@ func loadJob(m *sync.Map, id uuid.UUID) (*jobData, bool) {
 }
 
 // Most endpoints need to do this lookup so let's be consistent about it
-func (j *Jobby) getJob(ctx context.Context, getter JobIdGetter) (*jobData, *status.Status) {
+func (j *Jobby) getJob(ctx context.Context, getter JobIDGetter) (*jobData, *status.Status) {
 	jobId := getter.GetJobId()
 	var id uuid.UUID
 	var err error
