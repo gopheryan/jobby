@@ -100,13 +100,12 @@ func (j *Jobby) GetJobOutput(req *jobmanagerpb.GetJobOutputRequest, srv jobmanag
 	var readError error
 	var sendError error
 	var count int
+	buf := make([]byte, defaultOutputBufferSize)
 	// Read and send until one side fails
 	for readError == nil && sendError == nil {
-		buf := make([]byte, defaultOutputBufferSize)
 		count, readError = reader.Read(buf)
 		if count > 0 {
-			// (Reader) Implementations must not retain 'p'
-			// So we'll make a copy
+			// Copy only as much as the reader returned
 			dst := make([]byte, count)
 			copy(dst, buf[:count])
 			sendError = srv.Send(&jobmanagerpb.GetJobOutputResponse{
