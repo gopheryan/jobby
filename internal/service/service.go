@@ -87,7 +87,7 @@ func (j *Jobby) GetJobOutput(req *jobmanagerpb.GetJobOutputRequest, srv jobmanag
 
 	// The caller can cancel/detach at any time. This cancellation is communicated
 	// to this handler via context cancellation
-	context.AfterFunc(srv.Context(), func() {
+	stop := context.AfterFunc(srv.Context(), func() {
 		subLogger.Info("GetJobOutput request cancelled")
 		// One call to 'Close' will shut down this whole operation...
 		// This is going to cause an error on our reader
@@ -96,6 +96,7 @@ func (j *Jobby) GetJobOutput(req *jobmanagerpb.GetJobOutputRequest, srv jobmanag
 		}
 
 	})
+	defer stop()
 
 	var readError error
 	var sendError error
