@@ -32,7 +32,7 @@ func (m *mockUserGetter) GetUserContext(_ context.Context) string {
 func TestUnaryCalls(t *testing.T) {
 	ctx := context.Background()
 	mockUserGetter := &mockUserGetter{user: "someuser"}
-	jobService := service.NewJobService(1, mockUserGetter, "/tmp")
+	jobService := service.NewJobService(mockUserGetter, "/tmp")
 
 	t.Run("start-stop-status", func(tt *testing.T) {
 		resp, err := jobService.StartJob(ctx, &jobmanagerpb.StartJobRequest{
@@ -91,7 +91,7 @@ func TestUnaryCalls(t *testing.T) {
 // But for basic black box tests, a local server is easy enough to spin up
 func TestService(t *testing.T) {
 	srv := testutils.GrpcLocalServer{}
-	jobService := service.NewJobService(1, &mockUserGetter{user: "someuser"}, "/tmp")
+	jobService := service.NewJobService(&mockUserGetter{user: "someuser"}, "/tmp")
 	server := grpc.NewServer()
 
 	jobService.Register(server)

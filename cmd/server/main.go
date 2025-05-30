@@ -58,7 +58,7 @@ func main() {
 		grpc.Creds(credentials.NewTLS(&tlsConfig)),
 	)
 
-	jobbyService := service.NewJobService(1, UserGetterFunc(authinterceptors.GetUserContext), "/tmp")
+	jobbyService := service.NewJobService(UserGetterFunc(authinterceptors.GetUserContext), "/tmp")
 	jobbyService.Register(grpcServer)
 
 	// So I can poke at this thing with grpcurl

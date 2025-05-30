@@ -36,11 +36,6 @@ type jobData struct {
 
 type Jobby struct {
 	jobmanagerpb.UnimplementedJobManagerServer
-	// minimum buffer size use when reading from job output
-	// Must be > 0. Internal reader will block until 'minimumRead'
-	// bytes of data have been read from the job before sending
-	// output to the caller
-	minimumRead int
 	// Used to determine which user a request is coming from
 	// decouples the service from the auth strategy
 	userGetter UserGetter
@@ -51,11 +46,10 @@ type Jobby struct {
 	jobDirectory sync.Map
 }
 
-func NewJobService(minRead int, userGetter UserGetter, dir string) *Jobby {
+func NewJobService(userGetter UserGetter, dir string) *Jobby {
 	return &Jobby{
-		minimumRead: minRead,
-		userGetter:  userGetter,
-		directory:   dir,
+		userGetter: userGetter,
+		directory:  dir,
 	}
 }
 
