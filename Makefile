@@ -26,6 +26,14 @@ protos:
 start-server:
 	{ cd testdata/certs; go run ../../cmd/server/main.go; }
 
+# Starts a short job using 'jobcli' and attaches to its output
+# Assumes you have the server running already
+.PHONY: jobcli-echo-and-attach
+jobcli-echo-and-attach: echo
+	{ cd testdata/certs; \
+	  go run ../../cmd/jobcli start ../../testdata/testprograms/echo echo 15 | tail -c +13 | xargs go run ../../cmd/jobcli attach; \
+	}
+
 # Demonstrates sending a request via grpcurl
 .PHONY: start-job
 start-job: echo
