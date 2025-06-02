@@ -25,8 +25,14 @@ var attachCmd = &cobra.Command{
 	Use:  "attach job-id",
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		host, _ := cmd.Flags().GetString("host")
+		conn, err := newClientConnection(host)
+		if err != nil {
+			return err
+		}
+		defer conn.Close()
+
 		var id uuid.UUID
-		var err error
 		if id, err = uuid.Parse(args[0]); err != nil {
 			return fmt.Errorf("failed to parse job id: %w", err)
 		}
@@ -36,12 +42,12 @@ var attachCmd = &cobra.Command{
 			outputType = jobmanagerpb.OutputType_OUTPUT_TYPE_STDERR
 		}
 
-		return attachJob(cmd.Context(), id, outputType, os.Stdout)
+		return attachJob(cmd.Context(), id, outputType, os.Stdout, jobmanagerpb.NewJobManagerClient(conn))
 	},
 }
 
-func attachJob(ctx context.Context, jobId uuid.UUID, outputType jobmanagerpb.OutputType, dest io.Writer) error {
-	client, err := jobmanagerClient.GetJobOutput(ctx, &jobmanagerpb.GetJobOutputRequest{
+func attachJob(ctx context.Context, jobId uuid.UUID, outputType jobmanagerpb.OutputType, dest io.Writer, jmClient jobmanagerpb.JobManagerClient) error {
+	client, err := jmClient.GetJobOutput(ctx, &jobmanagerpb.GetJobOutputRequest{
 		JobId: jobId[:],
 		Type:  outputType,
 	})

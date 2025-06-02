@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/gopheryan/jobby/jobmanagerpb"
 	"github.com/spf13/cobra"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -18,22 +17,8 @@ const (
 	caPath         = "ca/ca.crt"
 )
 
-var (
-	jobmanagerClient jobmanagerpb.JobManagerClient
-	grpcClient       *grpc.ClientConn
-)
-
 func init() {
 	rootCmd.PersistentFlags().String("host", "localhost:8443", "server hostname:port")
-
-	// I tried using 'PostRun' on the root command, but that
-	// apparently doesn't run if your RunE function returns an error
-	cobra.OnFinalize(func() {
-		if grpcClient != nil {
-			_ = grpcClient.Close()
-			grpcClient = nil
-		}
-	})
 }
 
 var rootCmd = &cobra.Command{
@@ -43,17 +28,14 @@ var rootCmd = &cobra.Command{
 	CompletionOptions: cobra.CompletionOptions{
 		DisableDefaultCmd: true,
 	},
-	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		host, _ := cmd.Flags().GetString("host")
-		cfg, err := newTLSConfig()
-		if err != nil {
-			return fmt.Errorf("error creating TLS config: %w", err)
-		}
+}
 
-		grpcClient, err = grpc.NewClient(host, grpc.WithTransportCredentials(credentials.NewTLS(cfg)))
-		jobmanagerClient = jobmanagerpb.NewJobManagerClient(grpcClient)
-		return err
-	},
+func newClientConnection(host string) (*grpc.ClientConn, error) {
+	cfg, err := newTLSConfig()
+	if err != nil {
+		return nil, fmt.Errorf("error creating TLS config: %w", err)
+	}
+	return grpc.NewClient(host, grpc.WithTransportCredentials(credentials.NewTLS(cfg)))
 }
 
 func newTLSConfig() (*tls.Config, error) {
