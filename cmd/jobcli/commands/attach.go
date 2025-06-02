@@ -10,13 +10,13 @@ import (
 	"github.com/google/uuid"
 	"github.com/gopheryan/jobby/jobmanagerpb"
 	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
 )
 
 var stdErr bool
 
 func init() {
-	pflag.BoolVarP(&stdErr, "stderr", "", false, "attach to stderr output")
+
+	attachCmd.Flags().BoolVarP(&stdErr, "stderr", "", false, "attach to stderr output")
 
 	rootCmd.AddCommand(attachCmd)
 }
