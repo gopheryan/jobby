@@ -47,23 +47,29 @@ var attachCmd = &cobra.Command{
 }
 
 func attachJob(ctx context.Context, jobId uuid.UUID, outputType jobmanagerpb.OutputType, dest io.Writer, jmClient jobmanagerpb.JobManagerClient) error {
-	client, err := jmClient.GetJobOutput(ctx, &jobmanagerpb.GetJobOutputRequest{
+	subCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	client, err := jmClient.GetJobOutput(subCtx, &jobmanagerpb.GetJobOutputRequest{
 		JobId: jobId[:],
 		Type:  outputType,
 	})
 	if err != nil {
-		return fmt.Errorf("server returned error stopping job: %w", err)
+		return fmt.Errorf("server returned error attaching to job output: %w", err)
 	}
 
 	var resp *jobmanagerpb.GetJobOutputResponse
 	for err == nil {
 		resp, err = client.Recv()
 		if err == nil {
-			_, err = dest.Write(resp.Data)
+			if _, err = dest.Write(resp.Data); err != nil {
+				return fmt.Errorf("error writing output data to destination: %w", err)
+			}
 		}
 	}
+
 	if !errors.Is(err, io.EOF) {
-		return fmt.Errorf("error reading output data: %w", err)
+		return fmt.Errorf("error receiving output data: %w", err)
 	}
 	return nil
 }
